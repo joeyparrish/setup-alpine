@@ -120,16 +120,31 @@ mount_bind() {
 
 #============================  M a i n  ============================#
 
+# Both validate input architecture and set expected SHA256 for apk-tools for
+# that architecture.
+case "$INPUT_ARCH" in
+    x86_64)  DEFAULT_TOOLS_SHA256=1c65115a425d049590bec7c729c7fd88357fbb090a6fc8c31d834d7b0bc7d6f2 ;;
+    x86)     DEFAULT_TOOLS_SHA256=cb8160be3f57b2e7b071b63cb9acb4f06c1e2521b69db178b63e2130acd5504a ;;
+    aarch64) DEFAULT_TOOLS_SHA256=d49a63b8b6780fc1342d3e7e14862aa006c30bafbf74beec8e1dfe99e6f89471 ;;
+    armhf)   DEFAULT_TOOLS_SHA256=878a000702c1faeb9fdab594dc071b5a1c40647646c96b07aa35dcd43247567a ;;
+    armv7)   DEFAULT_TOOLS_SHA256=9d68d7cb0bbb46e02b7616e030eba7be1697d84cabf61e0a186a6b7522ffb09e ;;
+    ppc64le) DEFAULT_TOOLS_SHA256=e7d28c677b0a90f7b89bf85d848c52c1a91d06fd7e0661a55b457abaac4eb0b3 ;;
+    riscv64) DEFAULT_TOOLS_SHA256=b32132ebcb4fd0b01cd270689328e11d094bb9a69c2991ed40f359f857cce6a3 ;;
+    s390x)   DEFAULT_TOOLS_SHA256=c1ca31c424ce8c62a22cc8cc597770f64ca1106709e65ae447a81f6175081fa5 ;;
+	*) die 'Invalid input parameter: arch' \
+	       "Expected one of: x86_64, x86, aarch64, armhf, armv7, ppc64le, riscv64, s390x, but got: $INPUT_ARCH."
+esac
+
+if [[ -z "$INPUT_APK_TOOLS_URL" ]]; then
+    # Default the apk tools URL based on the architecture and the SHA256 for
+    # that architecture's binary.
+    INPUT_APK_TOOLS_URL="https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.0/$INPUT_ARCH/apk.static#!sha256!$DEFAULT_TOOLS_SHA256"
+fi
+
 case "$INPUT_APK_TOOLS_URL" in
 	https://*\#\!sha256\!* | http://*\#\!sha256\!*) ;;  # valid
 	*) die 'Invalid input parameter: apk-tools-url' \
 	       "The value must start with https:// or http:// and end with '#!sha256!' followed by a SHA-256 hash of the file to be downloaded, but got: $INPUT_APK_TOOLS_URL"
-esac
-
-case "$INPUT_ARCH" in
-	x86_64 | x86 | aarch64 | armhf | armv7 | ppc64le | riscv64 | s390x) ;;  # valid
-	*) die 'Invalid input parameter: arch' \
-	       "Expected one of: x86_64, x86, aarch64, armhf, armv7, ppc64le, riscv64, s390x, but got: $INPUT_ARCH."
 esac
 
 case "$INPUT_BRANCH" in
@@ -178,7 +193,7 @@ chmod +x "$APK"
 
 
 #-----------------------------------------------------------------------
-if [[ "$INPUT_ARCH" != x86* ]]; then
+if [[ "$INPUT_ARCH" != $(uname -m) ]]; then
 	qemu_arch=$(qemu_arch "$INPUT_ARCH")
 	qemu_cmd="qemu-$qemu_arch"
 

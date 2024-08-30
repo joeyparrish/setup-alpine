@@ -57,7 +57,8 @@ Default: _see link:action.yml[]_
 
 [[arch]] arch::
 CPU architecture to emulate using https://www.qemu.org/docs/master/user/main.html[QEMU user space emulator].
-Allowed values are: `x86_64` (native), `x86` (native), `aarch64`, `armhf` footnote:[armhf is armv6 with hard-float.], `armv7`, `ppc64le`, `riscv64` footnote:[riscv64 is available only for branch `edge` for now.], and `s390x`.
+If this matches your machine's CPU name, the chroot environment will be executed natively without qemu.
+Allowed values are: `x86_64`, `x86`, `aarch64`, `armhf` footnote:[armhf is armv6 with hard-float.], `armv7`, `ppc64le`, `riscv64` footnote:[riscv64 is available only for branch `edge` for now.], and `s390x`.
 +
 Default: `x86_64`
 
