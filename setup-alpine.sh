@@ -17,8 +17,9 @@ set -euo pipefail
 readonly SCRIPT_PATH=$(readlink -f "$0")
 readonly SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
-readonly ALPINE_BASE_PKGS='alpine-baselayout apk-tools busybox busybox-suid musl-utils'
+readonly ALPINE_BASE_PKGS='alpine-baselayout apk-tools bash busybox busybox-suid musl-utils sudo'
 readonly RUNNER_HOME="/home/$SUDO_USER"
+readonly RUNNER_WORKDIR="$(dirname "$RUNNER_WORKSPACE")"
 readonly ROOTFS_BASE_DIR="$RUNNER_HOME/rootfs"
 
 
@@ -105,16 +106,6 @@ sha256_check() {
 # Unpacks content of an APK package.
 unpack_apk() {
 	tar -xz "$@" |& sed '/tar: Ignoring unknown extended header/d'
-}
-
-# Binds the directory $1 at the mountpoint $2 and sets propagation to private.
-mount_bind() {
-	local src=$1
-	local dir=$2
-
-	mkdir -p "$dir"
-	mount -v --rbind "$src" "$dir"
-	mount --make-rprivate "$dir"
 }
 
 
@@ -274,17 +265,22 @@ fi
 
 
 #-----------------------------------------------------------------------
-group 'Bind filesystems into chroot'
+group 'Set chroot filesystem binds'
 
 mkdir -p proc
-mount -v -t proc none proc
-mount_bind /dev dev
-mount_bind /sys sys
-mount_bind "$RUNNER_HOME/work" "${RUNNER_HOME#/}/work"
+
+# These are bind arguments to proot.
+> .binds.sh
+echo "PROOT_BIND_ARGS=(" >> .binds.sh
+
+echo "  -b /proc" >> .binds.sh
+echo "  -b /dev" >> .binds.sh
+echo "  -b /sys" >> .binds.sh
+echo "  -b \"$RUNNER_WORKDIR\"" >> .binds.sh
 
 # Some systems (Ubuntu?) symlinks /dev/shm to /run/shm.
 if [ -L /dev/shm ] && [ -d /run/shm ]; then
-	mount_bind /run/shm run/shm
+	echo "  -b /run/shm" >> .binds.sh
 fi
 
 for vol in $INPUT_VOLUMES; do
@@ -292,19 +288,37 @@ for vol in $INPUT_VOLUMES; do
 	src=${vol%%:*}
 	dst=${vol#*:}
 
-	mount_bind "$src" "${dst#/}"
+	echo "  -b \"$src:$dst\"" >> .binds.sh
 done
+
+echo ")" >> .binds.sh
+
+
+#-----------------------------------------------------------------------
+group 'Install proot'
+
+# Installs PRoot from source, for compatibility with unprivileged, Docker-based
+# runners.
+(
+	set -e
+	cd "$RUNNER_TEMP"
+	git clone https://github.com/proot-me/PRoot -b v5.4.0
+	sudo apt -y install libtalloc-dev libarchive-dev
+	make -C PRoot/src loader.elf proot
+)
+install -Dv -m755 "$RUNNER_TEMP"/PRoot/src/proot abin/proot
 
 
 #-----------------------------------------------------------------------
 group 'Copy action scripts'
 
+install -Dv -m755 "$SCRIPT_DIR"/proot-configured abin/
 install -Dv -m755 "$SCRIPT_DIR"/alpine.sh abin/"$INPUT_SHELL_NAME"
 install -Dv -m755 "$SCRIPT_DIR"/destroy.sh .
 
 
 #-----------------------------------------------------------------------
-if [ "$INPUT_PACKAGES" ]; then
+if [[ "$INPUT_PACKAGES" != "" ]]; then
 	group 'Install packages'
 
 	pkgs=$(printf '%s ' $INPUT_PACKAGES)
@@ -317,25 +331,28 @@ fi
 
 
 #-----------------------------------------------------------------------
-group "Set up user $SUDO_USER"
+# Set up the user, but not if the runner is running as root.
+if [[ ${SUDO_UID:-1000} != 0 ]]; then
+	group "Set up user $SUDO_USER"
 
-cat > .setup.sh <<-SHELL
-	echo '▷ Creating user $SUDO_USER with uid ${SUDO_UID:-1000}'
-	adduser -u '${SUDO_UID:-1000}' -G users -s /bin/sh -D '$SUDO_USER'
+	cat > .setup.sh <<-SHELL
+		echo '▷ Creating user $SUDO_USER with uid ${SUDO_UID:-1000}'
+		adduser -u '${SUDO_UID:-1000}' -G users -s /bin/sh -D '$SUDO_USER'
 
-	if [ -d /etc/sudoers.d ]; then
-		echo '▷ Adding sudo rule:'
-		echo '$SUDO_USER ALL=(ALL) NOPASSWD: ALL' | tee /etc/sudoers.d/root
-	fi
-	if [ -d /etc/doas.d ]; then
-		echo '▷ Adding doas rule:'
-		echo 'permit nopass keepenv $SUDO_USER' | tee /etc/doas.d/root.conf
-	fi
-SHELL
-abin/"$INPUT_SHELL_NAME" --root /.setup.sh
+		if [ -d /etc/sudoers.d ]; then
+			echo '▷ Adding sudo rule:'
+			echo '$SUDO_USER ALL=(ALL) NOPASSWD: ALL' | tee /etc/sudoers.d/root
+		fi
+		if [ -d /etc/doas.d ]; then
+			echo '▷ Adding doas rule:'
+			echo 'permit nopass keepenv $SUDO_USER' | tee /etc/doas.d/root.conf
+		fi
+	SHELL
+	abin/"$INPUT_SHELL_NAME" --root /.setup.sh
 
-rm .setup.sh
-endgroup
+	rm .setup.sh
+	endgroup
+fi
 #-----------------------------------------------------------------------
 
 echo "root-path=$rootfs_dir" >> $GITHUB_OUTPUT

@@ -1,0 +1,10 @@
+#!/bin/bash
+
+rootfs=$(cd "$(dirname "$0")"/.. && pwd)
+. "$rootfs"/.binds.sh  # Defines PROOT_BIND_ARGS
+
+set -x
+
+exec "$rootfs"/abin/proot \
+	-0 -r "$rootfs" \
+	"${PROOT_BIND_ARGS[@]}" "$@"
